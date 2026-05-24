@@ -1,3 +1,4 @@
 node_modules
 .env
 qr_menu_db.sql
+.vercel
