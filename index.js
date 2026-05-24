@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import db from './db.js';
 import { createServer } from 'http'; 
 import { Server } from 'socket.io'; 
+import jwt from 'jsonwebtoken';
+import verifyAdminToken from './authMiddleware.js'; // استيراد حماية الـ JWT
 
 dotenv.config();
 
@@ -21,10 +23,27 @@ io.on('connection', (socket) => {
 });
 
 // ==========================================
-// 📱 مسارات تطبيق الزبائن (Client App Routes)
+// 🔐 مسار تسجيل الدخول للأدمن (Authentication)
 // ==========================================
 
-// 1. جلب المنيو للزبائن (يعرض فقط الوجبات المتاحة)
+app.post('/api/auth/login', (req, res) => {
+    const { username, password } = req.body;
+
+    // التحقق من البيانات القادمة من الـ env
+    if (username === process.env.ADMIN_USERNAME && password === process.env.ADMIN_PASSWORD) {
+        // توليد التوكن وصلاحيته 24 ساعة
+        const token = jwt.sign({ role: 'admin' }, process.env.JWT_SECRET, { expiresIn: '24h' });
+        return res.json({ success: true, token });
+    }
+
+    return res.status(401).json({ success: false, message: 'اسم المستخدم أو كلمة المرور غير صحيحة!' });
+});
+
+// ==========================================
+// 📱 مسارات تطبيق الزبائن (Client App Routes) - [مفتوحة للجميع]
+// ==========================================
+
+// 1. جلب المنيو للزبائن
 app.get('/api/menu', async (req, res) => {
     try {
         const [menu] = await db.execute('SELECT * FROM menu_items WHERE is_available = 1 ORDER BY id ASC');
@@ -34,7 +53,7 @@ app.get('/api/menu', async (req, res) => {
     }
 });
 
-// 2. استقبال الطلبات الجديدة من الزبائن وحفظها
+// 2. استقبال الطلبات الجديدة
 app.post('/api/orders', async (req, res) => {
     const { table_number, total_price } = req.body;
     try {
@@ -44,8 +63,6 @@ app.post('/api/orders', async (req, res) => {
         );
         
         const orderId = result.insertId;
-
-        // تنبيه لوحة تحكم الآدمين فوراً عبر الـ Socket
         io.emit('new_order', { id: orderId, table_number, total_price, status: 'pending' });
 
         return res.status(201).json({ success: true, orderId });
@@ -54,7 +71,7 @@ app.post('/api/orders', async (req, res) => {
     }
 });
 
-// 3. استقبال التقييمات والشكاوى من الزبائن
+// 3. استقبال التقييمات
 app.post('/api/feedback', async (req, res) => {
     const { table_number, rating, comment } = req.body;
     try {
@@ -69,10 +86,11 @@ app.post('/api/feedback', async (req, res) => {
 });
 
 // ==========================================
-// 🍽️ مسارات إدارة المنيو (Admin)
+// 🍽️ مسارات الإدارة المحمية بالـ JWT (Admin Routes)
 // ==========================================
+// تم تمرير verifyAdminToken كميدل وير قبل تنفيذ أي عملية للأدمن
 
-app.get('/api/admin/menu', async (req, res) => {
+app.get('/api/admin/menu', verifyAdminToken, async (req, res) => {
     try {
         const [menu] = await db.execute('SELECT * FROM menu_items ORDER BY id DESC');
         return res.json(menu);
@@ -81,7 +99,7 @@ app.get('/api/admin/menu', async (req, res) => {
     }
 });
 
-app.post('/api/admin/menu', async (req, res) => {
+app.post('/api/admin/menu', verifyAdminToken, async (req, res) => {
     const { name, price, category, image_url } = req.body;
     try {
         const [result] = await db.execute(
@@ -94,7 +112,7 @@ app.post('/api/admin/menu', async (req, res) => {
     }
 });
 
-app.put('/api/admin/menu/:id/toggle', async (req, res) => {
+app.put('/api/admin/menu/:id/toggle', verifyAdminToken, async (req, res) => {
     const { id } = req.params;
     const { is_available } = req.body;
     try {
@@ -105,7 +123,7 @@ app.put('/api/admin/menu/:id/toggle', async (req, res) => {
     }
 });
 
-app.delete('/api/admin/menu/:id', async (req, res) => {
+app.delete('/api/admin/menu/:id', verifyAdminToken, async (req, res) => {
     const { id } = req.params;
     try {
         await db.execute('DELETE FROM menu_items WHERE id = ?', [id]);
@@ -116,10 +134,10 @@ app.delete('/api/admin/menu/:id', async (req, res) => {
 });
 
 // ==========================================
-// 📦 مسارات الطلبات (مع حماية الحقل)
+// 📦 مسارات الطلبات المحمية للأدمن
 // ==========================================
 
-app.get('/api/admin/orders', async (req, res) => {
+app.get('/api/admin/orders', verifyAdminToken, async (req, res) => {
     try {
         const [orders] = await db.execute('SELECT * FROM orders WHERE is_archived = 0 ORDER BY id DESC');
         return res.json(orders);
@@ -129,7 +147,7 @@ app.get('/api/admin/orders', async (req, res) => {
     }
 });
 
-app.put('/api/admin/orders/:id/archive', async (req, res) => {
+app.put('/api/admin/orders/:id/archive', verifyAdminToken, async (req, res) => {
     const { id } = req.params;
     try {
         await db.execute('UPDATE orders SET is_archived = 1 WHERE id = ?', [id]);
@@ -140,7 +158,7 @@ app.put('/api/admin/orders/:id/archive', async (req, res) => {
     }
 });
 
-app.put('/api/admin/orders/:id/status', async (req, res) => {
+app.put('/api/admin/orders/:id/status', verifyAdminToken, async (req, res) => {
     const { id } = req.body.status === "completed" ? req.params : { id: req.params.id };
     const { status } = req.body;
     try {
@@ -152,7 +170,7 @@ app.put('/api/admin/orders/:id/status', async (req, res) => {
     }
 });
 
-app.get('/api/admin/analytics/rating', async (req, res) => {
+app.get('/api/admin/analytics/rating', verifyAdminToken, async (req, res) => {
     try {
         const [rows] = await db.execute('SELECT AVG(rating) as averageRating FROM feedbacks');
         const average = rows[0].averageRating ? parseFloat(rows[0].averageRating).toFixed(1) : "0";
@@ -163,5 +181,5 @@ app.get('/api/admin/analytics/rating', async (req, res) => {
 });
 
 httpServer.listen(PORT, () => {
-    console.log(`✅ السيرفر يعمل على المنفذ ${PORT} ومدمج به مسارات المنيو، الأرشفة، والتقارير بنجاح!`);
+    console.log(`✅ السيرفر يعمل ويحمي مسارات الآدمن عبر JWT بنجاح على المنفذ ${PORT}!`);
 });
