@@ -8,7 +8,7 @@ import { Server } from 'socket.io';
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000; // الأفضل استخدام process.env للرفع
+const PORT = process.env.PORT || 5000; 
 
 app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "DELETE"], credentials: true }));
 app.use(express.json());
@@ -21,7 +21,55 @@ io.on('connection', (socket) => {
 });
 
 // ==========================================
-// 🍽️ مسارات إدارة المنيو
+// 📱 مسارات تطبيق الزبائن (Client App Routes)
+// ==========================================
+
+// 1. جلب المنيو للزبائن (يعرض فقط الوجبات المتاحة)
+app.get('/api/menu', async (req, res) => {
+    try {
+        const [menu] = await db.execute('SELECT * FROM menu_items WHERE is_available = 1 ORDER BY id ASC');
+        return res.json(menu);
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// 2. استقبال الطلبات الجديدة من الزبائن وحفظها
+app.post('/api/orders', async (req, res) => {
+    const { table_number, total_price } = req.body;
+    try {
+        const [result] = await db.execute(
+            'INSERT INTO orders (table_number, total_price, status, is_archived) VALUES (?, ?, "pending", 0)',
+            [table_number, total_price]
+        );
+        
+        const orderId = result.insertId;
+
+        // تنبيه لوحة تحكم الآدمين فوراً عبر الـ Socket
+        io.emit('new_order', { id: orderId, table_number, total_price, status: 'pending' });
+
+        return res.status(201).json({ success: true, orderId });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// 3. استقبال التقييمات والشكاوى من الزبائن
+app.post('/api/feedback', async (req, res) => {
+    const { table_number, rating, comment } = req.body;
+    try {
+        await db.execute(
+            'INSERT INTO feedbacks (table_number, rating, comment) VALUES (?, ?, ?)',
+            [table_number, rating, comment]
+        );
+        return res.status(201).json({ success: true });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// ==========================================
+// 🍽️ مسارات إدارة المنيو (Admin)
 // ==========================================
 
 app.get('/api/admin/menu', async (req, res) => {
@@ -73,12 +121,9 @@ app.delete('/api/admin/menu/:id', async (req, res) => {
 
 app.get('/api/admin/orders', async (req, res) => {
     try {
-        // نصيحة: تأكد من إضافة حقل is_archived لجدول الـ orders في قاعدة بياناتك (قيمة افتراضية 0)
-        // إذا لسه ما ضفته، غير الاستعلام لـ 'SELECT * FROM orders WHERE status != "completed" ORDER BY id DESC'
         const [orders] = await db.execute('SELECT * FROM orders WHERE is_archived = 0 ORDER BY id DESC');
         return res.json(orders);
     } catch (error) {
-        // لو الحقل مش موجود، بيجيب كل الطلبات عشان ما يوقف السيرفر
         const [orders] = await db.execute('SELECT * FROM orders ORDER BY id DESC');
         return res.json(orders);
     }
@@ -95,7 +140,6 @@ app.put('/api/admin/orders/:id/archive', async (req, res) => {
     }
 });
 
-// باقي المسارات (update status, feedback) كما هي بدون تغيير
 app.put('/api/admin/orders/:id/status', async (req, res) => {
     const { id } = req.body.status === "completed" ? req.params : { id: req.params.id };
     const { status } = req.body;
