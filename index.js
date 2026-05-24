@@ -40,6 +40,41 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 // ==========================================
+// ⚙️ مسارات إعدادات المتجر العامة (General Settings)
+// ==========================================
+
+// 1. جلب إعدادات المطعم - [متاح للجميع ليعرض بالفرونت إند]
+app.get('/api/settings', async (req, res) => {
+    try {
+        // جلب أول سطر دائماً لأنها إعدادات موحدة للمطعم
+        const [rows] = await db.execute('SELECT * FROM RestaurantSettings LIMIT 1');
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'لم يتم العثور على إعدادات!' });
+        }
+        return res.json(rows[0]);
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// 2. تحديث إعدادات المطعم - [محمي بـ JWT، للآدمن فقط]
+app.put('/api/admin/settings', verifyAdminToken, async (req, res) => {
+    const { restaurant_name, about_text, logo_url, facebook_url, instagram_url, working_hours } = req.body;
+    try {
+        // تحديث السطر الأول دائماً بناءً على معرف id = 1
+        await db.execute(
+            `UPDATE RestaurantSettings 
+             SET restaurant_name = ?, about_text = ?, logo_url = ?, facebook_url = ?, instagram_url = ?, working_hours = ? 
+             WHERE id = 1`,
+            [restaurant_name, about_text, logo_url, facebook_url, instagram_url, working_hours]
+        );
+        return res.json({ success: true, message: 'تم تحديث إعدادات المطعم بنجاح واقتدار!' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// ==========================================
 // 📱 مسارات تطبيق الزبائن (Client App Routes) - [مفتوحة للجميع]
 // ==========================================
 
@@ -88,7 +123,6 @@ app.post('/api/feedback', async (req, res) => {
 // ==========================================
 // 🍽️ مسارات الإدارة المحمية بالـ JWT (Admin Routes)
 // ==========================================
-// تم تمرير verifyAdminToken كميدل وير قبل تنفيذ أي عملية للأدمن
 
 app.get('/api/admin/menu', verifyAdminToken, async (req, res) => {
     try {
