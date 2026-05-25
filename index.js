@@ -68,6 +68,19 @@ app.get('/api/settings', async (req, res) => {
     }
 });
 
+// 🔥 [جديد] مسار مرادف لتلبية طلب الفرونتد ومنع خطأ الـ 404 في الداشبورد
+app.get('/api/admin/settings', verifyAdminToken, async (req, res) => {
+    try {
+        const [rows] = await db.execute('SELECT * FROM RestaurantSettings LIMIT 1');
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'لم يتم العثور على إعدادات!' });
+        }
+        return res.json(rows[0]);
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 app.put('/api/admin/settings', verifyAdminToken, async (req, res) => {
     const { restaurant_name, about_text, logo_url, facebook_url, instagram_url, working_hours } = req.body;
     try {
@@ -89,9 +102,10 @@ app.put('/api/admin/settings', verifyAdminToken, async (req, res) => {
 app.get('/api/menu', async (req, res) => {
     try {
         const [menu] = await db.execute('SELECT * FROM menu_items WHERE is_available = 1 ORDER BY id ASC');
-        return res.json(menu);
+        // حماية مضافة لضمان إرسال مصفوفة دائماً تمنع تدمير الـ map() بالفرونتد
+        return res.json(Array.isArray(menu) ? menu : []);
     } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(500).json([]);
     }
 });
 
@@ -128,15 +142,25 @@ app.post('/api/feedback', async (req, res) => {
     }
 });
 
+// 🔥 [جديد] مسار جلب الآراء للأدمن لتلبية طلب الفرونتد ومنع الـ 404 والـ Unexpected token '<'
+app.get('/api/admin/feedback', verifyAdminToken, async (req, res) => {
+    try {
+        const [feedbacks] = await db.execute('SELECT * FROM feedbacks ORDER BY id DESC');
+        return res.json(Array.isArray(feedbacks) ? feedbacks : []);
+    } catch (error) {
+        return res.status(500).json([]);
+    }
+});
+
 // ==========================================
 // 🍽️ مسارات الإدارة المحمية بالـ JWT (Admin Routes)
 // ==========================================
 app.get('/api/admin/menu', verifyAdminToken, async (req, res) => {
     try {
         const [menu] = await db.execute('SELECT * FROM menu_items ORDER BY id DESC');
-        return res.json(menu);
+        return res.json(Array.isArray(menu) ? menu : []);
     } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(500).json([]);
     }
 });
 
@@ -181,14 +205,13 @@ app.get('/api/admin/orders', verifyAdminToken, async (req, res) => {
     try {
         const [orders] = await db.execute('SELECT * FROM orders WHERE is_archived = 0 ORDER BY id DESC');
         
-        // تعديل أمان جوهري: التحقق الفردي من كل سطر لمنع الانهيار الكامل بسبب قيم NULL القديمة
         const formattedOrders = orders.map(order => {
             let parsedItems = [];
             if (order.items) {
                 try {
                     parsedItems = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
                 } catch (e) {
-                    parsedItems = []; // مصفوفة فارغة بديلة لضمان عدم انهيار الـ Map في الفرونتد
+                    parsedItems = []; 
                 }
             }
             return {
@@ -217,7 +240,7 @@ app.get('/api/admin/orders', verifyAdminToken, async (req, res) => {
             });
             return res.json(formattedOrders);
         } catch (err) {
-            return res.status(500).json({ success: false, message: err.message });
+            return res.status(500).json([]);
         }
     }
 });
@@ -251,7 +274,7 @@ app.get('/api/admin/analytics/rating', verifyAdminToken, async (req, res) => {
         const average = rows[0].averageRating ? parseFloat(rows[0].averageRating).toFixed(1) : "0";
         return res.json({ success: true, averageRating: average });
     } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(500).json({ success: false, averageRating: "0" });
     }
 });
 
