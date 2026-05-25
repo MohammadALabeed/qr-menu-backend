@@ -5,33 +5,47 @@ import db from './db.js';
 import { createServer } from 'http'; 
 import { Server } from 'socket.io'; 
 import jwt from 'jsonwebtoken';
-import verifyAdminToken from './authMiddleware.js'; // استيراد حماية الـ JWT
+import verifyAdminToken from './authMiddleware.js';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000; 
 
-app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "DELETE"], credentials: true }));
+// إعدادات CORS الشاملة لمنع أي حظر من المتصفحات
+app.use(cors({ 
+    origin: "*", 
+    methods: ["GET", "POST", "PUT", "DELETE"], 
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
 app.use(express.json());
 
 const httpServer = createServer(app);
-const io = new Server(httpServer, { cors: { origin: "*", methods: ["GET", "POST", "PUT"] } });
+const io = new Server(httpServer, { 
+    cors: { 
+        origin: "*", 
+        methods: ["GET", "POST", "PUT", "DELETE"] 
+    } 
+});
 
 io.on('connection', (socket) => {
     console.log(`🔌 متصل جديد: ${socket.id}`);
 });
 
+// مسار فحص للتأكد أن السيرفر مستيقظ
+app.get('/', (req, res) => {
+    res.json({ success: true, message: "API is running successfully!" });
+});
+
 // ==========================================
 // 🔐 مسار تسجيل الدخول للأدمن (Authentication)
 // ==========================================
-
 app.post('/api/auth/login', (req, res) => {
     const { username, password } = req.body;
 
-    // التحقق من البيانات القادمة من الـ env
     if (username === process.env.ADMIN_USERNAME && password === process.env.ADMIN_PASSWORD) {
-        // توليد التوكن وصلاحيته 24 ساعة
         const token = jwt.sign({ role: 'admin' }, process.env.JWT_SECRET, { expiresIn: '24h' });
         return res.json({ success: true, token });
     }
@@ -42,11 +56,8 @@ app.post('/api/auth/login', (req, res) => {
 // ==========================================
 // ⚙️ مسارات إعدادات المتجر العامة (General Settings)
 // ==========================================
-
-// 1. جلب إعدادات المطعم - [متاح للجميع ليعرض بالفرونت إند]
 app.get('/api/settings', async (req, res) => {
     try {
-        // جلب أول سطر دائماً لأنها إعدادات موحدة للمطعم
         const [rows] = await db.execute('SELECT * FROM RestaurantSettings LIMIT 1');
         if (rows.length === 0) {
             return res.status(404).json({ success: false, message: 'لم يتم العثور على إعدادات!' });
@@ -57,11 +68,9 @@ app.get('/api/settings', async (req, res) => {
     }
 });
 
-// 2. تحديث إعدادات المطعم - [محمي بـ JWT، للآدمن فقط]
 app.put('/api/admin/settings', verifyAdminToken, async (req, res) => {
     const { restaurant_name, about_text, logo_url, facebook_url, instagram_url, working_hours } = req.body;
     try {
-        // تحديث السطر الأول دائماً بناءً على معرف id = 1
         await db.execute(
             `UPDATE RestaurantSettings 
              SET restaurant_name = ?, about_text = ?, logo_url = ?, facebook_url = ?, instagram_url = ?, working_hours = ? 
@@ -75,10 +84,8 @@ app.put('/api/admin/settings', verifyAdminToken, async (req, res) => {
 });
 
 // ==========================================
-// 📱 مسارات تطبيق الزبائن (Client App Routes) - [مفتوحة للجميع]
+// 📱 مسارات تطبيق الزبائن (Client App Routes)
 // ==========================================
-
-// 1. جلب المنيو للزبائن
 app.get('/api/menu', async (req, res) => {
     try {
         const [menu] = await db.execute('SELECT * FROM menu_items WHERE is_available = 1 ORDER BY id ASC');
@@ -88,7 +95,6 @@ app.get('/api/menu', async (req, res) => {
     }
 });
 
-// 2. استقبال الطلبات الجديدة
 app.post('/api/orders', async (req, res) => {
     const { table_number, total_price } = req.body;
     try {
@@ -106,7 +112,6 @@ app.post('/api/orders', async (req, res) => {
     }
 });
 
-// 3. استقبال التقييمات
 app.post('/api/feedback', async (req, res) => {
     const { table_number, rating, comment } = req.body;
     try {
@@ -123,7 +128,6 @@ app.post('/api/feedback', async (req, res) => {
 // ==========================================
 // 🍽️ مسارات الإدارة المحمية بالـ JWT (Admin Routes)
 // ==========================================
-
 app.get('/api/admin/menu', verifyAdminToken, async (req, res) => {
     try {
         const [menu] = await db.execute('SELECT * FROM menu_items ORDER BY id DESC');
@@ -170,14 +174,17 @@ app.delete('/api/admin/menu/:id', verifyAdminToken, async (req, res) => {
 // ==========================================
 // 📦 مسارات الطلبات المحمية للأدمن
 // ==========================================
-
 app.get('/api/admin/orders', verifyAdminToken, async (req, res) => {
     try {
         const [orders] = await db.execute('SELECT * FROM orders WHERE is_archived = 0 ORDER BY id DESC');
         return res.json(orders);
     } catch (error) {
-        const [orders] = await db.execute('SELECT * FROM orders ORDER BY id DESC');
-        return res.json(orders);
+        try {
+            const [orders] = await db.execute('SELECT * FROM orders ORDER BY id DESC');
+            return res.json(orders);
+        } catch (err) {
+            return res.status(500).json({ success: false, message: err.message });
+        }
     }
 });
 
@@ -214,6 +221,12 @@ app.get('/api/admin/analytics/rating', verifyAdminToken, async (req, res) => {
     }
 });
 
-httpServer.listen(PORT, () => {
-    console.log(`✅ السيرفر يعمل ويحمي مسارات الآدمن عبر JWT بنجاح على المنفذ ${PORT}!`);
-});
+// تشغيل محلي احتياطي
+if (process.env.NODE_ENV !== 'production') {
+    httpServer.listen(PORT, () => {
+        console.log(`✅ Server running locally on port ${PORT}`);
+    });
+}
+
+// هام جداً لبيئة Vercel
+export default app;
