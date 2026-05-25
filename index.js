@@ -95,16 +95,22 @@ app.get('/api/menu', async (req, res) => {
     }
 });
 
+// 🔥 [تم التعديل هنا ليدعم السلة القادمة من الفرونتد] 🔥
 app.post('/api/orders', async (req, res) => {
-    const { table_number, total_price } = req.body;
+    const { table_number, total_price, items } = req.body; // استقبال السلة (items) هنا
     try {
+        // تحويل مصفوفة السلة إلى نص JSON ليتم تخزينها في عمود قاعدة البيانات (تأكد أن العمود يقبل نص طويل أو نوعه JSON)
+        const itemsString = JSON.stringify(items || []);
+
         const [result] = await db.execute(
-            'INSERT INTO orders (table_number, total_price, status, is_archived) VALUES (?, ?, "pending", 0)',
-            [table_number, total_price]
+            'INSERT INTO orders (table_number, total_price, items, status, is_archived) VALUES (?, ?, ?, "pending", 0)',
+            [table_number, total_price, itemsString]
         );
         
         const orderId = result.insertId;
-        io.emit('new_order', { id: orderId, table_number, total_price, status: 'pending' });
+        
+        // إرسال تفاصيل الطلب كاملة مع السلة للأدمن عبر السوكيت لتعرض فوراً في لوحة التحكم
+        io.emit('new_order', { id: orderId, table_number, total_price, items, status: 'pending' });
 
         return res.status(201).json({ success: true, orderId });
     } catch (error) {
@@ -177,11 +183,22 @@ app.delete('/api/admin/menu/:id', verifyAdminToken, async (req, res) => {
 app.get('/api/admin/orders', verifyAdminToken, async (req, res) => {
     try {
         const [orders] = await db.execute('SELECT * FROM orders WHERE is_archived = 0 ORDER BY id DESC');
-        return res.json(orders);
+        
+        // تحويل المنتجات من نصوص JSON إلى مصفوفات برمجية مجدداً لتسهيل قراءتها في الفرونتد للأدمن
+        const formattedOrders = orders.map(order => ({
+            ...order,
+            items: order.items ? JSON.parse(order.items) : []
+        }));
+        
+        return res.json(formattedOrders);
     } catch (error) {
         try {
             const [orders] = await db.execute('SELECT * FROM orders ORDER BY id DESC');
-            return res.json(orders);
+            const formattedOrders = orders.map(order => ({
+                ...order,
+                items: order.items ? JSON.parse(order.items) : []
+            }));
+            return res.json(formattedOrders);
         } catch (err) {
             return res.status(500).json({ success: false, message: err.message });
         }
