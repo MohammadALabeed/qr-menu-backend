@@ -280,6 +280,20 @@ app.post("/api/admin/menu", verifyAdminToken, async (req, res) => {
   }
 });
 
+app.put("/api/admin/menu/:id", verifyAdminToken, async (req, res) => {
+  const { id } = req.params;
+  const { name, price, category, image_url } = req.body;
+  try {
+    await db.execute(
+      "UPDATE menu_items SET name = ?, price = ?, category = ?, image_url = ? WHERE id = ?",
+      [name, price, category, image_url, id],
+    );
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 app.put("/api/admin/menu/:id/toggle", verifyAdminToken, async (req, res) => {
   const { id } = req.params;
   const { is_available } = req.body;
@@ -308,12 +322,9 @@ app.delete("/api/admin/menu/:id", verifyAdminToken, async (req, res) => {
 // 📦 مسارات الطلبات المحمية للأدمن
 // ==========================================
 app.get("/api/admin/orders", verifyAdminToken, async (req, res) => {
-  try {
-    const [orders] = await db.execute(
-      "SELECT * FROM orders WHERE is_archived = 0 ORDER BY id DESC",
-    );
-
-    const formattedOrders = orders.map((order) => {
+  const loadOrders = async (query) => {
+    const [orders] = await db.execute(query);
+    return orders.map((order) => {
       let parsedItems = [];
       if (order.items) {
         try {
@@ -330,34 +341,67 @@ app.get("/api/admin/orders", verifyAdminToken, async (req, res) => {
         items: Array.isArray(parsedItems) ? parsedItems : [],
       };
     });
+  };
+
+  try {
+    let orders;
+    try {
+      orders = await loadOrders(
+        "SELECT * FROM orders WHERE is_archived = 0 AND status != 'completed' ORDER BY id DESC",
+      );
+    } catch (firstQueryError) {
+      orders = await loadOrders(
+        "SELECT * FROM orders WHERE status NOT IN ('archived', 'completed') ORDER BY id DESC",
+      );
+    }
+
+    if (!orders || orders.length === 0) {
+      orders = await loadOrders(
+        "SELECT * FROM orders WHERE status NOT IN ('archived', 'completed') ORDER BY id DESC",
+      );
+    }
+
+    const itemIds = Array.from(
+      new Set(
+        orders.flatMap((order) =>
+          order.items
+            .filter((item) => item && item.id != null)
+            .map((item) => Number(item.id)),
+        ),
+      ),
+    );
+
+    let menuItemsById = {};
+    if (itemIds.length > 0) {
+      const placeholders = itemIds.map(() => "?").join(",");
+      const [menuItems] = await db.execute(
+        `SELECT id, name FROM menu_items WHERE id IN (${placeholders})`,
+        itemIds,
+      );
+      menuItemsById = menuItems.reduce((acc, menuItem) => {
+        acc[menuItem.id] = menuItem;
+        return acc;
+      }, {});
+    }
+
+    const formattedOrders = orders.map((order) => ({
+      ...order,
+      items: order.items.map((item) => {
+        const resolvedName =
+          item.item_name ||
+          item.name ||
+          menuItemsById[item.id]?.name ||
+          `#${item.id}`;
+        return {
+          ...item,
+          item_name: resolvedName,
+        };
+      }),
+    }));
 
     return res.json(formattedOrders);
   } catch (error) {
-    try {
-      const [orders] = await db.execute(
-        "SELECT * FROM orders ORDER BY id DESC",
-      );
-      const formattedOrders = orders.map((order) => {
-        let parsedItems = [];
-        if (order.items) {
-          try {
-            parsedItems =
-              typeof order.items === "string"
-                ? JSON.parse(order.items)
-                : order.items;
-          } catch (e) {
-            parsedItems = [];
-          }
-        }
-        return {
-          ...order,
-          items: Array.isArray(parsedItems) ? parsedItems : [],
-        };
-      });
-      return res.json(formattedOrders);
-    } catch (err) {
-      return res.status(200).json([]);
-    }
+    return res.status(200).json([]);
   }
 });
 
@@ -392,7 +436,33 @@ app.put("/api/admin/orders/:id/status", verifyAdminToken, async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
   try {
-    await db.execute("UPDATE orders SET status = ? WHERE id = ?", [status, id]);
+    if (status === "completed") {
+      try {
+        await db.execute(
+          "UPDATE orders SET status = ?, is_archived = 1 WHERE id = ?",
+          [status, id],
+        );
+      } catch (updateError) {
+        if (
+          updateError &&
+          updateError.sqlMessage &&
+          updateError.sqlMessage.includes("Unknown column")
+        ) {
+          await db.execute("UPDATE orders SET status = ? WHERE id = ?", [
+            status,
+            id,
+          ]);
+        } else {
+          throw updateError;
+        }
+      }
+    } else {
+      await db.execute("UPDATE orders SET status = ? WHERE id = ?", [
+        status,
+        id,
+      ]);
+    }
+
     io.emit("order_status_updated", { id: Number(id), status });
     return res.json({ success: true });
   } catch (error) {
