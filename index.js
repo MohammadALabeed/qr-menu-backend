@@ -72,6 +72,7 @@ app.get("/api/settings", async (req, res) => {
     if (rows.length === 0) {
       // بيانات افتراضية للزبون في حال عدم وجود إعدادات بقاعدة البيانات منعاً للانهيار
       return res.json({
+        success: true,
         restaurant_name: "مطعمنا الجميل",
         about_text: "أهلاً بكم في مطعمنا تذوقوا أشهى المأكولات",
         logo_url: "",
@@ -80,9 +81,10 @@ app.get("/api/settings", async (req, res) => {
         working_hours: "12:00 PM - 12:00 AM",
       });
     }
-    return res.json(rows[0]);
+    return res.json({ success: true, ...rows[0] });
   } catch (error) {
     return res.json({
+      success: true,
       restaurant_name: "مطعمنا الجميل",
       about_text: "أهلاً بكم في مطعمنا تذوقوا أشهى المأكولات",
       logo_url: "",
@@ -99,6 +101,7 @@ app.get("/api/admin/settings", verifyAdminToken, async (req, res) => {
     const [rows] = await db.execute("SELECT * FROM restaurantsettings LIMIT 1");
     if (rows.length === 0) {
       return res.status(200).json({
+        success: true,
         id: 1,
         restaurant_name: "اضغط تعديل لكتابة اسم المطعم",
         about_text: "اكتب هنا نبذة عن المطعم",
@@ -108,7 +111,7 @@ app.get("/api/admin/settings", verifyAdminToken, async (req, res) => {
         working_hours: "12:00 PM - 12:00 AM",
       });
     }
-    return res.json(rows[0]);
+    return res.json({ success: true, ...rows[0] });
   } catch (error) {
     // حماية قصوى: نرجع كائن جاهز بكود 200 لكي تفتح لوحة الأدمن وتسمح له بالحفظ والتحديث
     return res.status(200).json({
@@ -166,6 +169,14 @@ app.put("/api/admin/settings", verifyAdminToken, async (req, res) => {
     return res.json({
       success: true,
       message: "تم تحديث إعدادات المطعم بنجاح واقتدار!",
+      settings: {
+        restaurant_name,
+        about_text,
+        logo_url,
+        facebook_url,
+        instagram_url,
+        working_hours,
+      },
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
